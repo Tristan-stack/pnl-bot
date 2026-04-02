@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model GuildConfig {
+  id             String  @id @default(cuid())
+  guildId        String  @unique
+  channelId      String?
+  backgroundPath String?
+
+  @@index([guildId])
+}
+
+model Wallet {
+  id      String   @id @default(cuid())
+  address String
+  name    String?
+  guildId String
+  addedAt DateTime @default(now())
+  trades  Trade[]
+
+  @@unique([address, guildId])
+  @@index([guildId])
+}
+
+model Trade {
+  id           String   @id @default(cuid())
+  walletId     String
+  wallet       Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  txHash       String   @unique
+  tradeType    String
+  tokenSymbol  String
+  tokenAddress String
+  amountUsd    Float
+  pnlUsd       Float?
+  pnlPercent   Float?
+  timestamp    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([walletId])
+  @@index([createdAt])
+  @@index([timestamp])
+}

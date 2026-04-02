@@ -1,0 +1,9 @@
+node_modules/
+dist/
+generated/
+.env
+*.db
+*.db-journal
+data/
+# GMGN Ed25519 keys (never commit)
+*.pem

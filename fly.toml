@@ -1,0 +1,13 @@
+app = "discord-pnl-bot"
+primary_region = "cdg"
+
+[build]
+
+[[mounts]]
+  source = "pnl_data"
+  destination = "/data"
+
+[env]
+  DATABASE_URL = "file:/data/db.sqlite"
+  DATA_DIR = "/data"
+  NODE_ENV = "production"
