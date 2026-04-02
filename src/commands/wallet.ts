@@ -14,11 +14,11 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((sub) =>
     sub
       .setName('add')
-      .setDescription('Add one or more wallets (format: address:name or just address)')
+      .setDescription('Add wallet(s) to monitoring')
       .addStringOption((opt) =>
         opt
-          .setName('wallets')
-          .setDescription('Wallets to add (e.g. "addr1:Name1, addr2:Name2" or "addr1, addr2")')
+          .setName('address')
+          .setDescription('address or address:name (multiple: separate with commas)')
           .setRequired(true)
       )
   )
@@ -98,7 +98,7 @@ const isValidSolanaAddress = (address: string): boolean => {
 }
 
 const handleAdd = async (interaction: ChatInputCommandInteraction, guildId: string) => {
-  const walletsInput = interaction.options.getString('wallets', true)
+  const walletsInput = interaction.options.getString('address', true)
   const walletEntries = parseWalletInput(walletsInput)
   
   if (walletEntries.length === 0) {
