@@ -1,7 +1,10 @@
 import axios from 'axios'
 import { randomUUID } from 'crypto'
+import dns from 'dns'
 import { z } from 'zod'
 import type { TradeData } from '../types'
+
+dns.setDefaultResultOrder('ipv4first')
 
 const BASE_URL = process.env.GMGN_HOST ?? 'https://openapi.gmgn.ai'
 const DEFAULT_CHAIN = 'sol'
@@ -110,6 +113,8 @@ export const getWalletActivity = async (
   let pages = 0
   const maxPages = 5
 
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
   try {
     while (pages < maxPages) {
       const { timestamp, client_id } = buildAuthQuery()
@@ -125,6 +130,12 @@ export const getWalletActivity = async (
       if (cursor) {
         params.cursor = cursor
       }
+
+      if (pages > 0) {
+        await sleep(500)
+      }
+
+      console.log(`[GMGN] Fetching ${walletAddress.slice(0, 8)}... page ${pages + 1}`)
 
       const { data } = await axios.get(`${BASE_URL}/v1/user/wallet_activity`, {
         params,
@@ -149,6 +160,8 @@ export const getWalletActivity = async (
         timeout: 15_000,
       })
 
+      console.log(`[GMGN] Raw response for ${walletAddress.slice(0, 8)}...:`, JSON.stringify(data).slice(0, 500))
+
       const parsed = GmgnActivityResponseSchema.safeParse(data)
 
       if (!parsed.success) {
@@ -163,6 +176,7 @@ export const getWalletActivity = async (
       }
 
       const activities = parsed.data.data?.activities ?? []
+      console.log(`[GMGN] Got ${activities.length} activities for ${walletAddress.slice(0, 8)}...`)
       for (const activity of activities) {
         const trade = mapActivityToTrade(activity)
         if (trade) {
@@ -183,6 +197,13 @@ export const getWalletActivity = async (
   } catch (err) {
     const axiosErr = err as { response?: { status?: number; data?: unknown }; message?: string }
     const status = axiosErr.response?.status
+    
+    if (status === 429) {
+      console.warn(`[GMGN] Rate limited for ${walletAddress.slice(0, 8)}..., waiting 5s...`)
+      await sleep(5000)
+      return getWalletActivity(walletAddress, options)
+    }
+    
     console.error(`[GMGN] Request failed for ${walletAddress}: status=${status} message=${axiosErr.message}`)
     return []
   }

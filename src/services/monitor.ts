@@ -153,10 +153,13 @@ const runCleanup = async () => {
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 export const pollAllWallets = async (client: Client) => {
   const wallets = await prisma.wallet.findMany()
-  for (const wallet of wallets) {
-    await processWallet(client, wallet)
+  for (let i = 0; i < wallets.length; i++) {
+    if (i > 0) await sleep(1000)
+    await processWallet(client, wallets[i])
   }
 }
 

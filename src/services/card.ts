@@ -13,9 +13,10 @@ const COLORS = {
   loss: '#FF1744',
   bg: '#0d1117',
   text: '#ffffff',
-  textMuted: '#8b949e',
-  overlay: 'rgba(13, 17, 23, 0.15)',
+  textMuted: 'rgba(255, 255, 255, 0.7)',
 }
+
+const LEFT_PANEL_WIDTH = 450
 
 const FONT_FAMILY = 'Inter'
 let fontsRegistered = false
@@ -90,56 +91,71 @@ const generateDailyCard = async (
 
   await drawBackground(ctx, backgroundPath, accentColor)
 
-  const gradient = ctx.createLinearGradient(0, 0, WIDTH, 0)
+  const gradient = ctx.createLinearGradient(0, 0, LEFT_PANEL_WIDTH, 0)
   gradient.addColorStop(0, accentColor)
   gradient.addColorStop(1, isProfit ? '#00C853' : '#D50000')
   ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, WIDTH, 4)
+  ctx.fillRect(0, 0, LEFT_PANEL_WIDTH, 4)
+
+  const leftX = 40
+  const centerX = LEFT_PANEL_WIDTH / 2
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '500 22px Inter, sans-serif'
-  ctx.fillText(cardData.walletName, 60, 58)
+  ctx.font = '500 18px Inter, sans-serif'
+  ctx.fillText(cardData.walletName, leftX, 50)
 
   ctx.fillStyle = COLORS.text
-  ctx.font = 'bold 36px Inter, sans-serif'
-  ctx.fillText("Today's realized PnL", 60, 108)
+  ctx.font = 'bold 24px Inter, sans-serif'
+  ctx.fillText("Today's PnL", leftX, 85)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 22px Inter, sans-serif'
-  const dayLine = cardData.dayLabel
-  ctx.fillText(dayLine, 60, 148)
+  ctx.font = '400 16px Inter, sans-serif'
+  ctx.fillText(cardData.dayLabel, leftX, 115)
 
-  const headerBottom = 160
-  const footerTop = HEIGHT - 70
-  const contentHeight = 88 + 20 + 36 + 20 + 22
-  const centerY = headerBottom + (footerTop - headerBottom - contentHeight) / 2
-
+  const contentStartY = 180
+  
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 88px Inter, sans-serif'
+  ctx.font = 'bold 72px Inter, sans-serif'
   const pnlText = formatUsd(cardData.totalPnlUsd)
   const pnlMetrics = ctx.measureText(pnlText)
-  ctx.fillText(pnlText, (WIDTH - pnlMetrics.width) / 2, centerY + 88)
+  ctx.fillText(pnlText, centerX - pnlMetrics.width / 2, contentStartY)
 
-  ctx.font = 'bold 36px Inter, sans-serif'
+  ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.blendedPnlPercent)
   const pctMetrics = ctx.measureText(pctText)
-  ctx.fillText(pctText, (WIDTH - pctMetrics.width) / 2, centerY + 88 + 20 + 36)
+  ctx.fillText(pctText, centerX - pctMetrics.width / 2, contentStartY + 50)
+
+  ctx.fillStyle = COLORS.text
+  ctx.font = '400 18px Inter, sans-serif'
+  
+  const stats = [
+    { label: 'Sells', value: cardData.sellCount.toString() },
+    { label: 'Tokens', value: cardData.uniqueTokenCount.toString() },
+    { label: 'Win Rate', value: `${cardData.winRatePercent.toFixed(0)}%` },
+    { label: 'Volume', value: formatVolume(cardData.volumeUsd) },
+  ]
+
+  const statsStartY = contentStartY + 100
+  const statsGap = 50
+
+  stats.forEach((stat, i) => {
+    const y = statsStartY + i * statsGap
+    ctx.fillStyle = COLORS.textMuted
+    ctx.font = '400 16px Inter, sans-serif'
+    ctx.fillText(stat.label, leftX, y)
+    
+    ctx.fillStyle = COLORS.text
+    ctx.font = 'bold 20px Inter, sans-serif'
+    ctx.fillText(stat.value, leftX, y + 24)
+  })
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 22px Inter, sans-serif'
-  const statsLine = `${cardData.sellCount} sell${cardData.sellCount !== 1 ? 's' : ''} · ${cardData.uniqueTokenCount} token${cardData.uniqueTokenCount !== 1 ? 's' : ''} · Win ${cardData.winRatePercent.toFixed(0)}%`
-  const statsW = ctx.measureText(statsLine).width
-  ctx.fillText(statsLine, (WIDTH - statsW) / 2, centerY + 88 + 20 + 36 + 20 + 22)
-
-  ctx.font = '400 20px Inter, sans-serif'
-  const volText = `Volume ${formatVolume(cardData.volumeUsd)}`
+  ctx.font = '400 14px Inter, sans-serif'
   const timeText = formatTimestamp(cardData.timestamp)
-  const poweredText = 'powered by GMGN'
-
-  ctx.fillText(volText, 60, HEIGHT - 50)
-  ctx.fillText(timeText, (WIDTH - ctx.measureText(timeText).width) / 2, HEIGHT - 50)
-  ctx.globalAlpha = 0.6
-  ctx.fillText(poweredText, WIDTH - ctx.measureText(poweredText).width - 60, HEIGHT - 50)
+  ctx.fillText(timeText, leftX, HEIGHT - 40)
+  
+  ctx.globalAlpha = 0.5
+  ctx.fillText('powered by GMGN', leftX, HEIGHT - 20)
   ctx.globalAlpha = 1
 
   return canvas.toBuffer('image/png')
@@ -156,74 +172,84 @@ const generateSingleTradeCard = async (
 
   await drawBackground(ctx, backgroundPath, accentColor)
 
-  const gradient = ctx.createLinearGradient(0, 0, WIDTH, 0)
+  const gradient = ctx.createLinearGradient(0, 0, LEFT_PANEL_WIDTH, 0)
   gradient.addColorStop(0, accentColor)
   gradient.addColorStop(1, isProfit ? '#00C853' : '#D50000')
   ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, WIDTH, 4)
+  ctx.fillRect(0, 0, LEFT_PANEL_WIDTH, 4)
+
+  const leftX = 40
+  const centerX = LEFT_PANEL_WIDTH / 2
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '500 22px Inter, sans-serif'
-  ctx.fillText(cardData.walletName, 60, 70)
-
-  const headerBottom = 90
-  const footerTop = HEIGHT - 70
-  const contentHeight = 42 + 30 + 96 + 20 + 40
-  const centerY = headerBottom + (footerTop - headerBottom - contentHeight) / 2
+  ctx.font = '500 18px Inter, sans-serif'
+  ctx.fillText(cardData.walletName, leftX, 50)
 
   ctx.fillStyle = COLORS.text
-  ctx.font = 'bold 42px Inter, sans-serif'
+  ctx.font = 'bold 28px Inter, sans-serif'
   const tokenText = `$${cardData.tokenSymbol}`
-  const tokenMetrics = ctx.measureText(tokenText)
-  const tokenX = (WIDTH - tokenMetrics.width - 100) / 2
-  const tokenY = centerY + 42
-  ctx.fillText(tokenText, tokenX, tokenY)
+  ctx.fillText(tokenText, leftX, 90)
 
   const badgeText = cardData.tradeType.toUpperCase()
-  const badgeX = tokenX + tokenMetrics.width + 16
-  const badgeY = tokenY - 20
-  ctx.font = 'bold 18px Inter, sans-serif'
+  ctx.font = 'bold 14px Inter, sans-serif'
   const badgeMetrics = ctx.measureText(badgeText)
-  const badgePadX = 12
-  const badgePadY = 6
+  const tokenMetrics = ctx.measureText(tokenText)
+  ctx.font = 'bold 28px Inter, sans-serif'
+  
+  const badgeX = leftX + tokenMetrics.width + 12
+  const badgeY = 90 - 8
+  const badgePadX = 8
+  const badgePadY = 4
 
   drawRoundedRect(
     ctx,
     badgeX,
     badgeY - 14 - badgePadY,
     badgeMetrics.width + badgePadX * 2,
-    22 + badgePadY * 2,
-    6
+    18 + badgePadY * 2,
+    4
   )
   ctx.fillStyle = accentColor
-  ctx.globalAlpha = 0.2
+  ctx.globalAlpha = 0.25
   ctx.fill()
   ctx.globalAlpha = 1
   ctx.fillStyle = accentColor
+  ctx.font = 'bold 14px Inter, sans-serif'
   ctx.fillText(badgeText, badgeX + badgePadX, badgeY)
 
+  const contentStartY = 200
+
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 96px Inter, sans-serif'
+  ctx.font = 'bold 72px Inter, sans-serif'
   const pnlText = formatUsd(cardData.pnlUsd)
   const pnlMetrics = ctx.measureText(pnlText)
-  ctx.fillText(pnlText, (WIDTH - pnlMetrics.width) / 2, tokenY + 30 + 96)
+  ctx.fillText(pnlText, centerX - pnlMetrics.width / 2, contentStartY)
 
-  ctx.font = 'bold 40px Inter, sans-serif'
+  ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.pnlPercent)
   const pctMetrics = ctx.measureText(pctText)
-  ctx.fillText(pctText, (WIDTH - pctMetrics.width) / 2, tokenY + 30 + 96 + 20 + 40)
+  ctx.fillText(pctText, centerX - pctMetrics.width / 2, contentStartY + 50)
+
+  ctx.fillStyle = COLORS.text
+  ctx.font = '400 18px Inter, sans-serif'
+
+  const statsStartY = contentStartY + 120
+  const statsGap = 50
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 20px Inter, sans-serif'
-  const amountText = `Swapped $${Math.abs(cardData.amountUsd).toFixed(2)}`
+  ctx.font = '400 16px Inter, sans-serif'
+  ctx.fillText('Swapped', leftX, statsStartY)
+  ctx.fillStyle = COLORS.text
+  ctx.font = 'bold 20px Inter, sans-serif'
+  ctx.fillText(`$${Math.abs(cardData.amountUsd).toFixed(2)}`, leftX, statsStartY + 24)
+
+  ctx.fillStyle = COLORS.textMuted
+  ctx.font = '400 14px Inter, sans-serif'
   const timeText = formatTimestamp(cardData.timestamp)
-  const poweredText = 'powered by GMGN'
+  ctx.fillText(timeText, leftX, HEIGHT - 40)
 
-  ctx.fillText(amountText, 60, HEIGHT - 50)
-  ctx.fillText(timeText, (WIDTH - ctx.measureText(timeText).width) / 2, HEIGHT - 50)
-
-  ctx.globalAlpha = 0.6
-  ctx.fillText(poweredText, WIDTH - ctx.measureText(poweredText).width - 60, HEIGHT - 50)
+  ctx.globalAlpha = 0.5
+  ctx.fillText('powered by GMGN', leftX, HEIGHT - 20)
   ctx.globalAlpha = 1
 
   return canvas.toBuffer('image/png')
@@ -258,14 +284,24 @@ const drawBackground = async (
       }
 
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, WIDTH, HEIGHT)
-      ctx.fillStyle = COLORS.overlay
-      ctx.fillRect(0, 0, WIDTH, HEIGHT)
+      
+      drawLeftPanelBlur(ctx)
     } catch {
       fillDefaultBackground(ctx, accentColor)
     }
   } else {
     fillDefaultBackground(ctx, accentColor)
   }
+}
+
+const drawLeftPanelBlur = (ctx: SKRSContext2D) => {
+  const blurGradient = ctx.createLinearGradient(0, 0, LEFT_PANEL_WIDTH + 80, 0)
+  blurGradient.addColorStop(0, 'rgba(13, 17, 23, 0.85)')
+  blurGradient.addColorStop(0.7, 'rgba(13, 17, 23, 0.75)')
+  blurGradient.addColorStop(1, 'rgba(13, 17, 23, 0)')
+  
+  ctx.fillStyle = blurGradient
+  ctx.fillRect(0, 0, LEFT_PANEL_WIDTH + 80, HEIGHT)
 }
 
 const fillDefaultBackground = (ctx: SKRSContext2D, accentColor: string) => {
