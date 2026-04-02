@@ -31,4 +31,5 @@ COPY prisma.config.ts ./
 
 RUN mkdir -p /data/backgrounds
 
-CMD ["node", "dist/src/index.js"]
+# Run migrations and start the bot
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/index.js"]
