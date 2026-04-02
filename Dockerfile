@@ -28,6 +28,7 @@ COPY --from=builder /app/dist/ ./dist/
 COPY --from=builder /app/generated/ ./generated/
 COPY prisma/ ./prisma/
 COPY prisma.config.ts ./
+COPY fonts/ ./fonts/
 
 RUN mkdir -p /data/backgrounds
 

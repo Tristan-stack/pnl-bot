@@ -1,6 +1,7 @@
-import { createCanvas, loadImage, type SKRSContext2D } from '@napi-rs/canvas'
+import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D } from '@napi-rs/canvas'
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
+import { join } from 'path'
 import type { CardData } from '../types'
 import { formatUsd, formatPercent, formatTimestamp, formatVolume } from '../utils/format'
 
@@ -13,7 +14,36 @@ const COLORS = {
   bg: '#0d1117',
   text: '#ffffff',
   textMuted: '#8b949e',
-  overlay: 'rgba(13, 17, 23, 0.45)',
+  overlay: 'rgba(13, 17, 23, 0.15)',
+}
+
+const FONT_FAMILY = 'Inter'
+let fontsRegistered = false
+
+const registerFonts = async () => {
+  if (fontsRegistered) return
+  
+  try {
+    const fontsDir = join(process.cwd(), 'fonts')
+    const regularPath = join(fontsDir, 'Inter-Regular.ttf')
+    const boldPath = join(fontsDir, 'Inter-Bold.ttf')
+    const mediumPath = join(fontsDir, 'Inter-Medium.ttf')
+    
+    if (existsSync(regularPath)) {
+      GlobalFonts.registerFromPath(regularPath, 'Inter')
+    }
+    if (existsSync(boldPath)) {
+      GlobalFonts.registerFromPath(boldPath, 'Inter')
+    }
+    if (existsSync(mediumPath)) {
+      GlobalFonts.registerFromPath(mediumPath, 'Inter')
+    }
+    
+    fontsRegistered = true
+    console.log('[Card] Fonts registered successfully')
+  } catch (err) {
+    console.warn('[Card] Could not register fonts, using system fallback:', err)
+  }
 }
 
 const drawRoundedRect = (
@@ -41,6 +71,8 @@ export const generatePnlCard = async (
   cardData: CardData,
   backgroundPath?: string | null
 ): Promise<Buffer> => {
+  await registerFonts()
+  
   if (cardData.variant === 'daily') {
     return generateDailyCard(cardData, backgroundPath)
   }
@@ -65,15 +97,15 @@ const generateDailyCard = async (
   ctx.fillRect(0, 0, WIDTH, 4)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '500 22px sans-serif'
+  ctx.font = '500 22px Inter, sans-serif'
   ctx.fillText(cardData.walletName, 60, 58)
 
   ctx.fillStyle = COLORS.text
-  ctx.font = 'bold 36px sans-serif'
+  ctx.font = 'bold 36px Inter, sans-serif'
   ctx.fillText("Today's realized PnL", 60, 108)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 22px sans-serif'
+  ctx.font = '400 22px Inter, sans-serif'
   const dayLine = cardData.dayLabel
   ctx.fillText(dayLine, 60, 148)
 
@@ -83,23 +115,23 @@ const generateDailyCard = async (
   const centerY = headerBottom + (footerTop - headerBottom - contentHeight) / 2
 
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 88px sans-serif'
+  ctx.font = 'bold 88px Inter, sans-serif'
   const pnlText = formatUsd(cardData.totalPnlUsd)
   const pnlMetrics = ctx.measureText(pnlText)
   ctx.fillText(pnlText, (WIDTH - pnlMetrics.width) / 2, centerY + 88)
 
-  ctx.font = 'bold 36px sans-serif'
+  ctx.font = 'bold 36px Inter, sans-serif'
   const pctText = formatPercent(cardData.blendedPnlPercent)
   const pctMetrics = ctx.measureText(pctText)
   ctx.fillText(pctText, (WIDTH - pctMetrics.width) / 2, centerY + 88 + 20 + 36)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 22px sans-serif'
+  ctx.font = '400 22px Inter, sans-serif'
   const statsLine = `${cardData.sellCount} sell${cardData.sellCount !== 1 ? 's' : ''} · ${cardData.uniqueTokenCount} token${cardData.uniqueTokenCount !== 1 ? 's' : ''} · Win ${cardData.winRatePercent.toFixed(0)}%`
   const statsW = ctx.measureText(statsLine).width
   ctx.fillText(statsLine, (WIDTH - statsW) / 2, centerY + 88 + 20 + 36 + 20 + 22)
 
-  ctx.font = '400 20px sans-serif'
+  ctx.font = '400 20px Inter, sans-serif'
   const volText = `Volume ${formatVolume(cardData.volumeUsd)}`
   const timeText = formatTimestamp(cardData.timestamp)
   const poweredText = 'powered by GMGN'
@@ -131,7 +163,7 @@ const generateSingleTradeCard = async (
   ctx.fillRect(0, 0, WIDTH, 4)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '500 22px sans-serif'
+  ctx.font = '500 22px Inter, sans-serif'
   ctx.fillText(cardData.walletName, 60, 70)
 
   const headerBottom = 90
@@ -140,7 +172,7 @@ const generateSingleTradeCard = async (
   const centerY = headerBottom + (footerTop - headerBottom - contentHeight) / 2
 
   ctx.fillStyle = COLORS.text
-  ctx.font = 'bold 42px sans-serif'
+  ctx.font = 'bold 42px Inter, sans-serif'
   const tokenText = `$${cardData.tokenSymbol}`
   const tokenMetrics = ctx.measureText(tokenText)
   const tokenX = (WIDTH - tokenMetrics.width - 100) / 2
@@ -150,7 +182,7 @@ const generateSingleTradeCard = async (
   const badgeText = cardData.tradeType.toUpperCase()
   const badgeX = tokenX + tokenMetrics.width + 16
   const badgeY = tokenY - 20
-  ctx.font = 'bold 18px sans-serif'
+  ctx.font = 'bold 18px Inter, sans-serif'
   const badgeMetrics = ctx.measureText(badgeText)
   const badgePadX = 12
   const badgePadY = 6
@@ -171,18 +203,18 @@ const generateSingleTradeCard = async (
   ctx.fillText(badgeText, badgeX + badgePadX, badgeY)
 
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 96px sans-serif'
+  ctx.font = 'bold 96px Inter, sans-serif'
   const pnlText = formatUsd(cardData.pnlUsd)
   const pnlMetrics = ctx.measureText(pnlText)
   ctx.fillText(pnlText, (WIDTH - pnlMetrics.width) / 2, tokenY + 30 + 96)
 
-  ctx.font = 'bold 40px sans-serif'
+  ctx.font = 'bold 40px Inter, sans-serif'
   const pctText = formatPercent(cardData.pnlPercent)
   const pctMetrics = ctx.measureText(pctText)
   ctx.fillText(pctText, (WIDTH - pctMetrics.width) / 2, tokenY + 30 + 96 + 20 + 40)
 
   ctx.fillStyle = COLORS.textMuted
-  ctx.font = '400 20px sans-serif'
+  ctx.font = '400 20px Inter, sans-serif'
   const amountText = `Swapped $${Math.abs(cardData.amountUsd).toFixed(2)}`
   const timeText = formatTimestamp(cardData.timestamp)
   const poweredText = 'powered by GMGN'

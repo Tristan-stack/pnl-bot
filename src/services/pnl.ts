@@ -2,6 +2,8 @@ import type { TradeData } from '../types'
 
 const pnlDebug = () => process.env.PNL_DEBUG_LOG === '1'
 
+const FEE_PER_TRANSACTION_USD = 1
+
 export const computePnl = async (
   walletId: string,
   trade: TradeData
@@ -38,11 +40,12 @@ export const computePnl = async (
     })
   }
 
-  const pnlUsd = trade.amountUsd - totalCostUsd
+  const totalFees = (buys.length + 1) * FEE_PER_TRANSACTION_USD
+  const pnlUsd = trade.amountUsd - totalCostUsd - totalFees
   const pnlPercent = totalCostUsd > 0 ? (pnlUsd / totalCostUsd) * 100 : 0
 
   if (pnlDebug()) {
-    console.log(`[PnL]   Total cost=$${totalCostUsd.toFixed(2)} → PnL=$${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(1)}%)`)
+    console.log(`[PnL]   Total cost=$${totalCostUsd.toFixed(2)}, fees=$${totalFees.toFixed(2)} → PnL=$${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(1)}%)`)
   }
 
   return { pnlUsd, pnlPercent, buyCount: buys.length }
