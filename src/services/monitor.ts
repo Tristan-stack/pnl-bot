@@ -4,7 +4,7 @@ import prisma from '../db/client'
 import { getWalletActivity } from './gmgn'
 import { generatePnlCard } from './card'
 import { truncateAddress } from '../utils/format'
-import type { CardData, TradeData } from '../types'
+import type { CardData } from '../types'
 
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000
 
@@ -108,13 +108,10 @@ const runCleanup = async () => {
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
 export const pollAllWallets = async (client: Client) => {
   const wallets = await prisma.wallet.findMany()
-  for (let i = 0; i < wallets.length; i++) {
-    if (i > 0) await sleep(1000)
-    await processWallet(client, wallets[i])
+  for (const wallet of wallets) {
+    await processWallet(client, wallet)
   }
 }
 

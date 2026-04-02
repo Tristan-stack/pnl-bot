@@ -9,6 +9,36 @@ dns.setDefaultResultOrder('ipv4first')
 const BASE_URL = process.env.GMGN_HOST ?? 'https://openapi.gmgn.ai'
 const DEFAULT_CHAIN = 'sol'
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+const getMinRequestGapMs = (): number => {
+  const raw = process.env.GMGN_MIN_REQUEST_INTERVAL_MS
+  if (raw) {
+    const n = parseInt(raw, 10)
+    if (Number.isFinite(n) && n >= 500) return n
+  }
+  return 550
+}
+
+let gmgnRequestChain: Promise<unknown> = Promise.resolve()
+let lastGmgnRequestStart = 0
+
+const runGmgnHttp = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const job = gmgnRequestChain.then(async () => {
+    const gap = getMinRequestGapMs()
+    const now = Date.now()
+    const wait = Math.max(0, lastGmgnRequestStart + gap - now)
+    if (wait > 0) await sleep(wait)
+    lastGmgnRequestStart = Date.now()
+    return fn()
+  })
+  gmgnRequestChain = job.then(
+    () => undefined,
+    () => undefined
+  )
+  return job as Promise<T>
+}
+
 const getApiKey = (): string => {
   const key = process.env.GMGN_API_KEY
   if (!key) throw new Error('GMGN_API_KEY is required')
@@ -125,8 +155,6 @@ export const getWalletActivity = async (
   let pages = 0
   const maxPages = 10
 
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
   try {
     while (pages < maxPages) {
       const { timestamp, client_id } = buildAuthQuery()
@@ -143,36 +171,36 @@ export const getWalletActivity = async (
         params.cursor = cursor
       }
 
-      if (pages > 0) {
-        await sleep(500)
-      }
-
       console.log(`[GMGN] Fetching ${walletAddress.slice(0, 8)}... page ${pages + 1}`)
 
-      const { data } = await axios.get(`${BASE_URL}/v1/user/wallet_activity`, {
-        params,
-        paramsSerializer: (p) => {
-          const qs = new URLSearchParams()
-          for (const [k, v] of Object.entries(p)) {
-            if (Array.isArray(v)) {
-              v.forEach((item) => qs.append(k, String(item)))
-            } else {
-              qs.set(k, String(v))
+      const { data } = await runGmgnHttp(() =>
+        axios.get(`${BASE_URL}/v1/user/wallet_activity`, {
+          params,
+          paramsSerializer: (p) => {
+            const qs = new URLSearchParams()
+            for (const [k, v] of Object.entries(p)) {
+              if (Array.isArray(v)) {
+                v.forEach((item) => qs.append(k, String(item)))
+              } else {
+                qs.set(k, String(v))
+              }
             }
-          }
-          for (const t of types) {
-            qs.append('type', t)
-          }
-          return qs.toString()
-        },
-        headers: {
-          'X-APIKEY': apiKey,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15_000,
-      })
+            for (const t of types) {
+              qs.append('type', t)
+            }
+            return qs.toString()
+          },
+          headers: {
+            'X-APIKEY': apiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+        })
+      )
 
-      console.log(`[GMGN] Raw response for ${walletAddress.slice(0, 8)}...:`, JSON.stringify(data).slice(0, 500))
+      if (process.env.PNL_DEBUG_LOG === '1' || process.env.GMGN_DEBUG_LOG === '1') {
+        console.log(`[GMGN] Raw response for ${walletAddress.slice(0, 8)}...:`, JSON.stringify(data).slice(0, 500))
+      }
 
       const parsed = GmgnActivityResponseSchema.safeParse(data)
 
@@ -207,12 +235,20 @@ export const getWalletActivity = async (
 
     return allTrades
   } catch (err) {
-    const axiosErr = err as { response?: { status?: number; data?: unknown }; message?: string }
+    const axiosErr = err as {
+      response?: { status?: number; data?: unknown; headers?: Record<string, string | undefined> }
+      message?: string
+    }
     const status = axiosErr.response?.status
-    
+
     if (status === 429) {
-      console.warn(`[GMGN] Rate limited for ${walletAddress.slice(0, 8)}..., waiting 5s...`)
-      await sleep(5000)
+      const headers = axiosErr.response?.headers
+      const retryAfterSec = headers?.['retry-after'] ? parseInt(headers['retry-after'], 10) : NaN
+      const waitMs = Number.isFinite(retryAfterSec)
+        ? Math.max(retryAfterSec * 1000, 1000)
+        : 1500
+      console.warn(`[GMGN] 429 for ${walletAddress.slice(0, 8)}..., waiting ${waitMs}ms`)
+      await sleep(waitMs)
       return getWalletActivity(walletAddress, options)
     }
     
