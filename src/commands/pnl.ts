@@ -7,11 +7,10 @@ import {
 } from 'discord.js'
 import prisma from '../db/client'
 import { generatePnlCard } from '../services/card'
-import { computePnl } from '../services/pnl'
 import { truncateAddress, formatUsd, formatVolume, formatPercent } from '../utils/format'
 import { respondWalletAutocomplete } from '../utils/wallet-autocomplete'
 import { getTodayStartInTimeZone } from '../utils/day-boundary'
-import type { CardData, TradeData } from '../types'
+import type { CardData } from '../types'
 
 export const data = new SlashCommandBuilder()
   .setName('pnl')
@@ -159,30 +158,8 @@ const handleWallet = async (interaction: ChatInputCommandInteraction, guildId: s
   return interaction.reply({ embeds: [embed] })
 }
 
-const resolveSellPnlUsd = async (
-  walletId: string,
-  row: {
-    txHash: string
-    tokenSymbol: string
-    tokenAddress: string
-    amountUsd: number
-    pnlUsd: number | null
-    timestamp: Date
-  }
-): Promise<number> => {
-  if (row.pnlUsd != null) return row.pnlUsd
-  const sellAsTrade: TradeData = {
-    txHash: row.txHash,
-    tradeType: 'sell',
-    tokenSymbol: row.tokenSymbol,
-    tokenAddress: row.tokenAddress,
-    amountUsd: row.amountUsd,
-    pnlUsd: null,
-    pnlPercent: null,
-    timestamp: row.timestamp,
-  }
-  const { pnlUsd } = await computePnl(walletId, sellAsTrade)
-  return pnlUsd
+const resolveSellPnlUsd = (row: { pnlUsd: number | null }): number => {
+  return row.pnlUsd ?? 0
 }
 
 const handleCard = async (interaction: ChatInputCommandInteraction, guildId: string) => {
@@ -221,11 +198,7 @@ const handleCard = async (interaction: ChatInputCommandInteraction, guildId: str
     where: { guildId },
   })
 
-  const pnlBySell: number[] = []
-  for (const row of sellsToday) {
-    const pnl = await resolveSellPnlUsd(wallet.id, row)
-    pnlBySell.push(pnl)
-  }
+  const pnlBySell = sellsToday.map((row) => resolveSellPnlUsd(row))
 
   const totalPnlUsd = pnlBySell.reduce((s, p) => s + p, 0)
   const volumeUsd = sellsToday.reduce((s, t) => s + t.amountUsd, 0)

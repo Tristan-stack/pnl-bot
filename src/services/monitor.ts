@@ -2,7 +2,6 @@ import cron from 'node-cron'
 import { Client, AttachmentBuilder, TextChannel } from 'discord.js'
 import prisma from '../db/client'
 import { getWalletActivity } from './gmgn'
-import { computePnl } from './pnl'
 import { generatePnlCard } from './card'
 import { truncateAddress } from '../utils/format'
 import type { CardData, TradeData } from '../types'
@@ -42,8 +41,8 @@ const processWallet = async (
             tokenSymbol: trade.tokenSymbol,
             tokenAddress: trade.tokenAddress,
             amountUsd: trade.amountUsd,
-            pnlUsd: null,
-            pnlPercent: null,
+            pnlUsd: trade.pnlUsd,
+            pnlPercent: trade.pnlPercent,
             timestamp: trade.timestamp,
           },
         })
@@ -52,61 +51,17 @@ const processWallet = async (
       const sells = newTrades.filter((t) => t.tradeType === 'sell')
 
       for (const sell of sells) {
-        const { pnlUsd, pnlPercent } = await computePnl(wallet.id, sell)
-
-        await prisma.trade.updateMany({
-          where: { walletId: wallet.id, txHash: sell.txHash },
-          data: { pnlUsd, pnlPercent },
-        })
-
         if (process.env.PNL_DEBUG_LOG === '1') {
-          console.log(`[Monitor] ${walletLabel} SELL $${sell.tokenSymbol}: amount=$${sell.amountUsd.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(1)}%)`)
+          console.log(`[Monitor] ${walletLabel} SELL $${sell.tokenSymbol}: amount=$${sell.amountUsd.toFixed(2)} pnl=$${(sell.pnlUsd ?? 0).toFixed(2)} (${(sell.pnlPercent ?? 0).toFixed(1)}%)`)
         }
 
-        if (!isFirstRun) {
+        if (!isFirstRun && sell.pnlUsd !== null) {
           await sendPnlCard(client, wallet, {
             ...sell,
-            pnlUsd,
-            pnlPercent,
+            pnlUsd: sell.pnlUsd,
+            pnlPercent: sell.pnlPercent ?? 0,
           })
         }
-      }
-    }
-  }
-
-  await recomputeStaleSells(wallet.id, walletLabel)
-}
-
-const recomputeStaleSells = async (walletId: string, walletLabel: string) => {
-  const stale = await prisma.trade.findMany({
-    where: {
-      walletId,
-      tradeType: 'sell',
-      OR: [{ pnlUsd: null }, { pnlUsd: 0 }],
-    },
-  })
-
-  for (const row of stale) {
-    const trade: TradeData = {
-      txHash: row.txHash,
-      tradeType: 'sell',
-      tokenSymbol: row.tokenSymbol,
-      tokenAddress: row.tokenAddress,
-      amountUsd: row.amountUsd,
-      pnlUsd: null,
-      pnlPercent: null,
-      timestamp: row.timestamp,
-    }
-
-    const { pnlUsd, pnlPercent, buyCount } = await computePnl(walletId, trade)
-
-    if (buyCount > 0) {
-      await prisma.trade.updateMany({
-        where: { walletId, txHash: row.txHash },
-        data: { pnlUsd, pnlPercent },
-      })
-      if (process.env.PNL_DEBUG_LOG === '1') {
-        console.log(`[Monitor] Recomputed PnL for ${walletLabel} ${row.txHash.slice(0, 8)}... → $${pnlUsd.toFixed(2)}`)
       }
     }
   }
