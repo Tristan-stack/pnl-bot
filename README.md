@@ -65,7 +65,7 @@ openssl pkey -in gmgn-ed25519-private.pem -pubout -out gmgn-ed25519-public.pem
 
 Note : la cle privee n'est pas requise pour ce bot (lecture seule). Ne jamais committer les fichiers `.pem`.
 
-L'API GMGN est limitee a **2 requetes par seconde** ; le bot espace automatiquement les appels (~550 ms). Les champs peuvent evoluer sans preavis. Requetes **IPv4 uniquement** (IPv6 renvoie 403).
+L'API GMGN est limitee a **2 requetes par seconde** ; le bot espace les appels par defaut **1000 ms** (reglable via `GMGN_MIN_REQUEST_INTERVAL_MS`). En cas de **429**, backoff exponentiel + limite d'essais par page (pas de boucle infinie). Ne lance pas le bot **deux fois** avec la meme cle (local + Railway) : la limite est partagee. Les champs peuvent evoluer sans preavis. Requetes **IPv4 uniquement** (IPv6 renvoie 403).
 
 ### Creer le bot Discord
 

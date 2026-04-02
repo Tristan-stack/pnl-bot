@@ -108,10 +108,21 @@ const runCleanup = async () => {
   }
 }
 
+let pollAllWalletsRunning = false
+
 export const pollAllWallets = async (client: Client) => {
-  const wallets = await prisma.wallet.findMany()
-  for (const wallet of wallets) {
-    await processWallet(client, wallet)
+  if (pollAllWalletsRunning) {
+    console.log('[Monitor] Skipping poll: previous run still in progress')
+    return
+  }
+  pollAllWalletsRunning = true
+  try {
+    const wallets = await prisma.wallet.findMany()
+    for (const wallet of wallets) {
+      await processWallet(client, wallet)
+    }
+  } finally {
+    pollAllWalletsRunning = false
   }
 }
 

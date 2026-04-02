@@ -17,14 +17,28 @@ const getMinRequestGapMs = (): number => {
     const n = parseInt(raw, 10)
     if (Number.isFinite(n) && n >= 500) return n
   }
-  return 550
+  return 1000
+}
+
+const getMax429RetriesPerPage = (): number => {
+  const raw = process.env.GMGN_MAX_429_RETRIES_PER_PAGE
+  if (raw) {
+    const n = parseInt(raw, 10)
+    if (Number.isFinite(n) && n >= 1 && n <= 20) return n
+  }
+  return 8
 }
 
 let gmgnRequestChain: Promise<unknown> = Promise.resolve()
 let lastGmgnRequestStart = 0
+let globalPauseUntil = 0
 
 const runGmgnHttp = async <T>(fn: () => Promise<T>): Promise<T> => {
   const job = gmgnRequestChain.then(async () => {
+    const now0 = Date.now()
+    if (now0 < globalPauseUntil) {
+      await sleep(globalPauseUntil - now0)
+    }
     const gap = getMinRequestGapMs()
     const now = Date.now()
     const wait = Math.max(0, lastGmgnRequestStart + gap - now)
@@ -37,6 +51,34 @@ const runGmgnHttp = async <T>(fn: () => Promise<T>): Promise<T> => {
     () => undefined
   )
   return job as Promise<T>
+}
+
+const queueGmgnBackoff = (ms: number): Promise<void> => {
+  const job = gmgnRequestChain.then(() => sleep(ms))
+  gmgnRequestChain = job.then(
+    () => undefined,
+    () => undefined
+  )
+  return job
+}
+
+const readRetryAfterMs = (headers: unknown): number => {
+  if (!headers || typeof headers !== 'object') return NaN
+  const h = headers as {
+    get?: (key: string) => string | undefined
+    'retry-after'?: string
+  }
+  const v = h.get?.('retry-after') ?? h['retry-after']
+  if (!v) return NaN
+  const sec = parseInt(String(v), 10)
+  return Number.isFinite(sec) ? Math.max(sec * 1000, 1000) : NaN
+}
+
+const backoffMsFor429 = (attemptIndex: number, headerMs: number): number => {
+  const fromHeader = Number.isFinite(headerMs) ? headerMs : 0
+  const exponential = 2000 * 2 ** attemptIndex
+  const capped = Math.min(exponential, 60_000)
+  return Math.max(fromHeader, capped, 3000)
 }
 
 const getApiKey = (): string => {
@@ -154,105 +196,132 @@ export const getWalletActivity = async (
   let cursor: string | null = null
   let pages = 0
   const maxPages = 10
+  const max429PerPage = getMax429RetriesPerPage()
 
-  try {
-    while (pages < maxPages) {
-      const { timestamp, client_id } = buildAuthQuery()
+  while (pages < maxPages) {
+    const { timestamp, client_id } = buildAuthQuery()
 
-      const params: Record<string, string | number> = {
-        chain,
-        wallet_address: walletAddress,
-        limit,
-        timestamp,
-        client_id,
-      }
+    const params: Record<string, string | number> = {
+      chain,
+      wallet_address: walletAddress,
+      limit,
+      timestamp,
+      client_id,
+    }
 
-      if (cursor) {
-        params.cursor = cursor
-      }
+    if (cursor) {
+      params.cursor = cursor
+    }
 
-      console.log(`[GMGN] Fetching ${walletAddress.slice(0, 8)}... page ${pages + 1}`)
+    console.log(`[GMGN] Fetching ${walletAddress.slice(0, 8)}... page ${pages + 1}`)
 
-      const { data } = await runGmgnHttp(() =>
-        axios.get(`${BASE_URL}/v1/user/wallet_activity`, {
-          params,
-          paramsSerializer: (p) => {
-            const qs = new URLSearchParams()
-            for (const [k, v] of Object.entries(p)) {
-              if (Array.isArray(v)) {
-                v.forEach((item) => qs.append(k, String(item)))
-              } else {
-                qs.set(k, String(v))
+    let data: unknown = null
+    let pageOk = false
+
+    for (let attempt = 0; attempt < max429PerPage; attempt++) {
+      try {
+        const response = await runGmgnHttp(() =>
+          axios.get(`${BASE_URL}/v1/user/wallet_activity`, {
+            params,
+            paramsSerializer: (p) => {
+              const qs = new URLSearchParams()
+              for (const [k, v] of Object.entries(p)) {
+                if (Array.isArray(v)) {
+                  v.forEach((item) => qs.append(k, String(item)))
+                } else {
+                  qs.set(k, String(v))
+                }
               }
-            }
-            for (const t of types) {
-              qs.append('type', t)
-            }
-            return qs.toString()
-          },
-          headers: {
-            'X-APIKEY': apiKey,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15_000,
-        })
-      )
+              for (const t of types) {
+                qs.append('type', t)
+              }
+              return qs.toString()
+            },
+            headers: {
+              'X-APIKEY': apiKey,
+              'Content-Type': 'application/json',
+            },
+            timeout: 15_000,
+            validateStatus: () => true,
+          })
+        )
 
-      if (process.env.PNL_DEBUG_LOG === '1' || process.env.GMGN_DEBUG_LOG === '1') {
-        console.log(`[GMGN] Raw response for ${walletAddress.slice(0, 8)}...:`, JSON.stringify(data).slice(0, 500))
-      }
-
-      const parsed = GmgnActivityResponseSchema.safeParse(data)
-
-      if (!parsed.success) {
-        console.error(`[GMGN] Validation failed for ${walletAddress}:`, parsed.error.message)
-        break
-      }
-
-      const code = typeof parsed.data.code === 'string' ? parseInt(parsed.data.code, 10) : parsed.data.code
-      if (code !== 0) {
-        console.error(`[GMGN] API error for ${walletAddress}: code=${parsed.data.code} error=${parsed.data.error} message=${parsed.data.message}`)
-        break
-      }
-
-      const activities = parsed.data.data?.activities ?? []
-      console.log(`[GMGN] Got ${activities.length} activities for ${walletAddress.slice(0, 8)}...`)
-      for (const activity of activities) {
-        const trade = mapActivityToTrade(activity)
-        if (trade) {
-          allTrades.push(trade)
+        if (response.status === 429) {
+          const headerWait = readRetryAfterMs(response.headers)
+          const waitMs = backoffMsFor429(attempt, headerWait)
+          globalPauseUntil = Math.max(globalPauseUntil, Date.now() + waitMs)
+          console.warn(
+            `[GMGN] 429 ${walletAddress.slice(0, 8)}... page ${pages + 1} (try ${attempt + 1}/${max429PerPage}), backoff ${waitMs}ms`
+          )
+          await queueGmgnBackoff(waitMs)
+          continue
         }
+
+        if (response.status === 403) {
+          const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+          console.error(`[GMGN] 403 for ${walletAddress}: ${body.slice(0, 200)}`)
+          return allTrades
+        }
+
+        if (response.status !== 200) {
+          console.error(
+            `[GMGN] HTTP ${response.status} for ${walletAddress}: ${JSON.stringify(response.data).slice(0, 200)}`
+          )
+          return allTrades
+        }
+
+        data = response.data
+        pageOk = true
+        break
+      } catch (err) {
+        const axiosErr = err as { response?: { status?: number }; message?: string }
+        const st = axiosErr.response?.status
+        console.error(`[GMGN] Request failed for ${walletAddress}: status=${st} message=${axiosErr.message}`)
+        return allTrades
       }
-
-      pages++
-      cursor = parsed.data.data?.next ?? null
-      if (!cursor) break
     }
 
-    const buyN = allTrades.filter((t) => t.tradeType === 'buy').length
-    const sellN = allTrades.filter((t) => t.tradeType === 'sell').length
-    console.log(`[GMGN] ${walletAddress.slice(0, 8)}... → ${allTrades.length} trades (${pages} page(s)): ${buyN} buys, ${sellN} sells`)
-
-    return allTrades
-  } catch (err) {
-    const axiosErr = err as {
-      response?: { status?: number; data?: unknown; headers?: Record<string, string | undefined> }
-      message?: string
+    if (!pageOk) {
+      console.error(
+        `[GMGN] Giving up on ${walletAddress.slice(0, 8)}... page ${pages + 1} after ${max429PerPage} 429 retries (keeping ${allTrades.length} trades)`
+      )
+      break
     }
-    const status = axiosErr.response?.status
 
-    if (status === 429) {
-      const headers = axiosErr.response?.headers
-      const retryAfterSec = headers?.['retry-after'] ? parseInt(headers['retry-after'], 10) : NaN
-      const waitMs = Number.isFinite(retryAfterSec)
-        ? Math.max(retryAfterSec * 1000, 1000)
-        : 1500
-      console.warn(`[GMGN] 429 for ${walletAddress.slice(0, 8)}..., waiting ${waitMs}ms`)
-      await sleep(waitMs)
-      return getWalletActivity(walletAddress, options)
+    if (process.env.PNL_DEBUG_LOG === '1' || process.env.GMGN_DEBUG_LOG === '1') {
+      console.log(`[GMGN] Raw response for ${walletAddress.slice(0, 8)}...:`, JSON.stringify(data).slice(0, 500))
     }
-    
-    console.error(`[GMGN] Request failed for ${walletAddress}: status=${status} message=${axiosErr.message}`)
-    return []
+
+    const parsed = GmgnActivityResponseSchema.safeParse(data)
+
+    if (!parsed.success) {
+      console.error(`[GMGN] Validation failed for ${walletAddress}:`, parsed.error.message)
+      break
+    }
+
+    const code = typeof parsed.data.code === 'string' ? parseInt(parsed.data.code, 10) : parsed.data.code
+    if (code !== 0) {
+      console.error(`[GMGN] API error for ${walletAddress}: code=${parsed.data.code} error=${parsed.data.error} message=${parsed.data.message}`)
+      break
+    }
+
+    const activities = parsed.data.data?.activities ?? []
+    console.log(`[GMGN] Got ${activities.length} activities for ${walletAddress.slice(0, 8)}...`)
+    for (const activity of activities) {
+      const trade = mapActivityToTrade(activity)
+      if (trade) {
+        allTrades.push(trade)
+      }
+    }
+
+    pages++
+    cursor = parsed.data.data?.next ?? null
+    if (!cursor) break
   }
+
+  const buyN = allTrades.filter((t) => t.tradeType === 'buy').length
+  const sellN = allTrades.filter((t) => t.tradeType === 'sell').length
+  console.log(`[GMGN] ${walletAddress.slice(0, 8)}... → ${allTrades.length} trades (${pages} page(s)): ${buyN} buys, ${sellN} sells`)
+
+  return allTrades
 }
