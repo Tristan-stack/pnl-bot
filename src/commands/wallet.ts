@@ -14,12 +14,12 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((sub) =>
     sub
       .setName('add')
-      .setDescription('Add a Solana wallet to monitoring')
+      .setDescription('Add one or more wallets (format: address:name or just address)')
       .addStringOption((opt) =>
-        opt.setName('address').setDescription('Solana wallet address').setRequired(true)
-      )
-      .addStringOption((opt) =>
-        opt.setName('name').setDescription('Display name for this wallet').setRequired(false)
+        opt
+          .setName('wallets')
+          .setDescription('Wallets to add (e.g. "addr1:Name1, addr2:Name2" or "addr1, addr2")')
+          .setRequired(true)
       )
   )
   .addSubcommand((sub) =>
@@ -73,26 +73,86 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   if (sub === 'list') return handleList(interaction, guildId)
 }
 
+const parseWalletInput = (input: string): Array<{ address: string; name: string | null }> => {
+  const results: Array<{ address: string; name: string | null }> = []
+  
+  const entries = input.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+  
+  for (const entry of entries) {
+    const colonIndex = entry.indexOf(':')
+    
+    if (colonIndex > 0) {
+      const address = entry.slice(0, colonIndex).trim()
+      const name = entry.slice(colonIndex + 1).trim() || null
+      results.push({ address, name })
+    } else {
+      results.push({ address: entry.trim(), name: null })
+    }
+  }
+  
+  return results
+}
+
+const isValidSolanaAddress = (address: string): boolean => {
+  return address.length >= 32 && address.length <= 44 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(address)
+}
+
 const handleAdd = async (interaction: ChatInputCommandInteraction, guildId: string) => {
-  const address = interaction.options.getString('address', true).trim()
-  const name = interaction.options.getString('name')?.trim() ?? null
-
-  if (address.length < 32 || address.length > 44) {
-    return interaction.reply({ content: 'Invalid Solana address.', ephemeral: true })
+  const walletsInput = interaction.options.getString('wallets', true)
+  const walletEntries = parseWalletInput(walletsInput)
+  
+  if (walletEntries.length === 0) {
+    return interaction.reply({ content: 'No valid wallet addresses provided.', ephemeral: true })
   }
-
-  const existing = await prisma.wallet.findUnique({
-    where: { address_guildId: { address, guildId } },
-  })
-
-  if (existing) {
-    return interaction.reply({ content: `Wallet \`${truncateAddress(address)}\` is already monitored.`, ephemeral: true })
+  
+  await interaction.deferReply()
+  
+  const added: string[] = []
+  const skipped: string[] = []
+  const invalid: string[] = []
+  
+  for (const { address, name } of walletEntries) {
+    if (!isValidSolanaAddress(address)) {
+      invalid.push(truncateAddress(address))
+      continue
+    }
+    
+    const existing = await prisma.wallet.findUnique({
+      where: { address_guildId: { address, guildId } },
+    })
+    
+    if (existing) {
+      skipped.push(truncateAddress(address))
+      continue
+    }
+    
+    await prisma.wallet.create({ data: { address, name, guildId } })
+    
+    const displayName = name 
+      ? `**${name}** (\`${truncateAddress(address)}\`)` 
+      : `\`${truncateAddress(address)}\``
+    added.push(displayName)
   }
-
-  await prisma.wallet.create({ data: { address, name, guildId } })
-
-  const displayName = name ? `**${name}** (\`${truncateAddress(address)}\`)` : `\`${truncateAddress(address)}\``
-  return interaction.reply({ content: `Wallet ${displayName} added to monitoring.` })
+  
+  const lines: string[] = []
+  
+  if (added.length > 0) {
+    lines.push(`**Added ${added.length} wallet${added.length > 1 ? 's' : ''}:**\n${added.join('\n')}`)
+  }
+  
+  if (skipped.length > 0) {
+    lines.push(`**Already monitored:** ${skipped.join(', ')}`)
+  }
+  
+  if (invalid.length > 0) {
+    lines.push(`**Invalid addresses:** ${invalid.join(', ')}`)
+  }
+  
+  if (lines.length === 0) {
+    return interaction.editReply('No wallets were added.')
+  }
+  
+  return interaction.editReply(lines.join('\n\n'))
 }
 
 const handleRemove = async (interaction: ChatInputCommandInteraction, guildId: string) => {
