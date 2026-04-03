@@ -98,7 +98,10 @@ const generateDailyCard = async (
   ctx.fillRect(0, 0, LEFT_PANEL_WIDTH, 4)
 
   const leftX = 40
-  const centerX = LEFT_PANEL_WIDTH / 2
+  const panelRight = LEFT_PANEL_WIDTH - 24
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
 
   ctx.fillStyle = COLORS.textMuted
   ctx.font = '500 18px Inter, sans-serif'
@@ -113,17 +116,25 @@ const generateDailyCard = async (
   ctx.fillText(cardData.dayLabel, leftX, 115)
 
   const contentStartY = 180
-  
+
   ctx.fillStyle = accentColor
   ctx.font = 'bold 72px Inter, sans-serif'
   const pnlText = formatUsd(cardData.totalPnlUsd)
-  const pnlMetrics = ctx.measureText(pnlText)
-  ctx.fillText(pnlText, centerX - pnlMetrics.width / 2, contentStartY)
+  let pnlFontSize = 72
+  while (ctx.measureText(pnlText).width > panelRight - leftX && pnlFontSize > 36) {
+    pnlFontSize -= 4
+    ctx.font = `bold ${pnlFontSize}px Inter, sans-serif`
+  }
+  ctx.fillText(pnlText, leftX, contentStartY)
 
   ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.blendedPnlPercent)
-  const pctMetrics = ctx.measureText(pctText)
-  ctx.fillText(pctText, centerX - pctMetrics.width / 2, contentStartY + 50)
+  let pctFontSize = 32
+  while (ctx.measureText(pctText).width > panelRight - leftX && pctFontSize > 18) {
+    pctFontSize -= 2
+    ctx.font = `bold ${pctFontSize}px Inter, sans-serif`
+  }
+  ctx.fillText(pctText, leftX, contentStartY + 50)
 
   ctx.fillStyle = COLORS.text
   ctx.font = '400 18px Inter, sans-serif'
@@ -179,7 +190,10 @@ const generateSingleTradeCard = async (
   ctx.fillRect(0, 0, LEFT_PANEL_WIDTH, 4)
 
   const leftX = 40
-  const centerX = LEFT_PANEL_WIDTH / 2
+  const panelRight = LEFT_PANEL_WIDTH - 24
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
 
   ctx.fillStyle = COLORS.textMuted
   ctx.font = '500 18px Inter, sans-serif'
@@ -222,13 +236,21 @@ const generateSingleTradeCard = async (
   ctx.fillStyle = accentColor
   ctx.font = 'bold 72px Inter, sans-serif'
   const pnlText = formatUsd(cardData.pnlUsd)
-  const pnlMetrics = ctx.measureText(pnlText)
-  ctx.fillText(pnlText, centerX - pnlMetrics.width / 2, contentStartY)
+  let pnlFontSizeSingle = 72
+  while (ctx.measureText(pnlText).width > panelRight - leftX && pnlFontSizeSingle > 36) {
+    pnlFontSizeSingle -= 4
+    ctx.font = `bold ${pnlFontSizeSingle}px Inter, sans-serif`
+  }
+  ctx.fillText(pnlText, leftX, contentStartY)
 
   ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.pnlPercent)
-  const pctMetrics = ctx.measureText(pctText)
-  ctx.fillText(pctText, centerX - pctMetrics.width / 2, contentStartY + 50)
+  let pctFontSizeSingle = 32
+  while (ctx.measureText(pctText).width > panelRight - leftX && pctFontSizeSingle > 18) {
+    pctFontSizeSingle -= 2
+    ctx.font = `bold ${pctFontSizeSingle}px Inter, sans-serif`
+  }
+  ctx.fillText(pctText, leftX, contentStartY + 50)
 
   ctx.fillStyle = COLORS.text
   ctx.font = '400 18px Inter, sans-serif'
