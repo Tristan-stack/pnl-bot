@@ -5,6 +5,8 @@ import {
   EmbedBuilder,
 } from 'discord.js'
 import prisma from '../db/client'
+import { getWalletActivity } from '../services/gmgn'
+import { getTodayStartInTimeZone } from '../utils/day-boundary'
 import { truncateAddress } from '../utils/format'
 import { respondWalletAutocomplete } from '../utils/wallet-autocomplete'
 
@@ -44,6 +46,9 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((sub) =>
     sub.setName('list').setDescription('List all monitored wallets')
   )
+  .addSubcommand((sub) =>
+    sub.setName('fetch-today').setDescription('Fetch today buy/sell trades for all monitored wallets')
+  )
 
 export const autocomplete = async (interaction: AutocompleteInteraction) => {
   const guildId = interaction.guildId
@@ -71,6 +76,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   if (sub === 'remove') return handleRemove(interaction, guildId)
   if (sub === 'rename') return handleRename(interaction, guildId)
   if (sub === 'list') return handleList(interaction, guildId)
+  if (sub === 'fetch-today') return handleFetchToday(interaction, guildId)
 }
 
 const parseWalletInput = (input: string): Array<{ address: string; name: string | null }> => {
@@ -209,4 +215,73 @@ const handleList = async (interaction: ChatInputCommandInteraction, guildId: str
     .setFooter({ text: `${wallets.length} wallet${wallets.length > 1 ? 's' : ''} monitored` })
 
   return interaction.reply({ embeds: [embed] })
+}
+
+const handleFetchToday = async (interaction: ChatInputCommandInteraction, guildId: string) => {
+  const wallets = await prisma.wallet.findMany({ where: { guildId } })
+  if (wallets.length === 0) {
+    return interaction.reply({ content: 'No wallets are being monitored.', ephemeral: true })
+  }
+
+  await interaction.deferReply({ ephemeral: true })
+
+  const tz = process.env.PNL_DAYTIMEZONE ?? 'Europe/Paris'
+  const todayStart = getTodayStartInTimeZone(tz)
+
+  let fetchedToday = 0
+  let createdToday = 0
+  let existingToday = 0
+  let walletsWithNewTrades = 0
+
+  for (const wallet of wallets) {
+    const activities = await getWalletActivity(wallet.address, { types: ['buy', 'sell'] })
+    const todayTrades = activities.filter((trade) => trade.timestamp >= todayStart)
+
+    if (todayTrades.length === 0) continue
+
+    fetchedToday += todayTrades.length
+    let walletInserted = 0
+
+    for (const trade of todayTrades) {
+      const exists = await prisma.trade.findUnique({
+        where: { txHash: trade.txHash },
+        select: { id: true },
+      })
+
+      if (exists) {
+        existingToday++
+        continue
+      }
+
+      await prisma.trade.create({
+        data: {
+          walletId: wallet.id,
+          txHash: trade.txHash,
+          tradeType: trade.tradeType,
+          tokenSymbol: trade.tokenSymbol,
+          tokenAddress: trade.tokenAddress,
+          amountUsd: trade.amountUsd,
+          pnlUsd: trade.pnlUsd,
+          pnlPercent: trade.pnlPercent,
+          timestamp: trade.timestamp,
+        },
+      })
+
+      createdToday++
+      walletInserted++
+    }
+
+    if (walletInserted > 0) walletsWithNewTrades++
+  }
+
+  return interaction.editReply(
+    [
+      `Fetch complete for **${wallets.length}** wallet${wallets.length > 1 ? 's' : ''}.`,
+      `Today trades fetched: **${fetchedToday}**`,
+      `Inserted in DB: **${createdToday}**`,
+      `Already present: **${existingToday}**`,
+      `Wallets with new trades: **${walletsWithNewTrades}**`,
+      `Day boundary timezone: **${tz}**`,
+    ].join('\n')
+  )
 }
