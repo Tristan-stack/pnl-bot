@@ -12,6 +12,7 @@ import { generatePnlCard } from '../services/card'
 import { truncateAddress, formatUsd, formatVolume, formatPercent } from '../utils/format'
 import { respondWalletAutocomplete } from '../utils/wallet-autocomplete'
 import { getTodayStartInTimeZone } from '../utils/day-boundary'
+import { computeTokenFees } from '../utils/fees'
 import type { CardData } from '../types'
 
 export const data = new SlashCommandBuilder()
@@ -104,17 +105,22 @@ const handleToday = async (interaction: ChatInputCommandInteraction, guildId: st
     },
   })
 
-  const totalPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const grossPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const uniqueTokens = new Set(sells.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokens)
+  const netPnl = grossPnl - fees
   const totalVolume = sells.reduce((sum, t) => sum + t.amountUsd, 0)
   const winCount = sells.filter((t) => (t.pnlUsd ?? 0) > 0).length
   const winRate = sells.length > 0 ? (winCount / sells.length) * 100 : 0
 
   const embed = new EmbedBuilder()
     .setTitle("Today's PnL")
-    .setColor(totalPnl >= 0 ? 0x00e676 : 0xff1744)
+    .setColor(netPnl >= 0 ? 0x00e676 : 0xff1744)
     .addFields(
-      { name: 'Total PnL', value: formatUsd(totalPnl), inline: true },
-      { name: 'Trades', value: `${sells.length} sells`, inline: true },
+      { name: 'Net PnL', value: formatUsd(netPnl), inline: true },
+      { name: 'Gross PnL', value: formatUsd(grossPnl), inline: true },
+      { name: 'Fees', value: formatUsd(-fees), inline: true },
+      { name: 'Trades', value: `${sells.length} sells / ${uniqueTokens} tokens`, inline: true },
       { name: 'Win Rate', value: `${winRate.toFixed(0)}%`, inline: true },
       { name: 'Volume', value: formatVolume(totalVolume), inline: true },
     )
@@ -178,17 +184,22 @@ const handleShow = async (interaction: ChatInputCommandInteraction, guildId: str
     },
   })
 
-  const totalPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const grossPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const uniqueTokens = new Set(sells.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokens)
+  const netPnl = grossPnl - fees
   const totalVolume = sells.reduce((sum, t) => sum + t.amountUsd, 0)
   const winCount = sells.filter((t) => (t.pnlUsd ?? 0) > 0).length
   const winRate = sells.length > 0 ? (winCount / sells.length) * 100 : 0
 
   const embed = new EmbedBuilder()
     .setTitle(`PnL for ${range.label}`)
-    .setColor(totalPnl >= 0 ? 0x00e676 : 0xff1744)
+    .setColor(netPnl >= 0 ? 0x00e676 : 0xff1744)
     .addFields(
-      { name: 'Total PnL', value: formatUsd(totalPnl), inline: true },
-      { name: 'Trades', value: `${sells.length} sells`, inline: true },
+      { name: 'Net PnL', value: formatUsd(netPnl), inline: true },
+      { name: 'Gross PnL', value: formatUsd(grossPnl), inline: true },
+      { name: 'Fees', value: formatUsd(-fees), inline: true },
+      { name: 'Trades', value: `${sells.length} sells / ${uniqueTokens} tokens`, inline: true },
       { name: 'Win Rate', value: `${winRate.toFixed(0)}%`, inline: true },
       { name: 'Volume', value: formatVolume(totalVolume), inline: true },
     )
@@ -221,7 +232,10 @@ const handleWallet = async (interaction: ChatInputCommandInteraction, guildId: s
     orderBy: { timestamp: 'desc' },
   })
 
-  const totalPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const grossPnl = sells.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0)
+  const uniqueTokens = new Set(sells.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokens)
+  const netPnl = grossPnl - fees
   const displayName = wallet.name ?? truncateAddress(wallet.address, 6)
 
   const tradeLines = sells.length > 0
@@ -236,17 +250,19 @@ const handleWallet = async (interaction: ChatInputCommandInteraction, guildId: s
 
   const embed = new EmbedBuilder()
     .setTitle(`${displayName} — Today's PnL`)
-    .setColor(totalPnl >= 0 ? 0x00e676 : 0xff1744)
+    .setColor(netPnl >= 0 ? 0x00e676 : 0xff1744)
     .setDescription(tradeLines)
-    .addFields({ name: 'Total PnL', value: formatUsd(totalPnl), inline: true })
-    .setFooter({ text: `${sells.length} sell${sells.length !== 1 ? 's' : ''} today` })
+    .addFields(
+      { name: 'Net PnL', value: formatUsd(netPnl), inline: true },
+      { name: 'Gross PnL', value: formatUsd(grossPnl), inline: true },
+      { name: 'Fees', value: formatUsd(-fees), inline: true },
+    )
+    .setFooter({
+      text: `${sells.length} sell${sells.length !== 1 ? 's' : ''} / ${uniqueTokens} token${uniqueTokens !== 1 ? 's' : ''} today`,
+    })
     .setTimestamp()
 
   return interaction.reply({ embeds: [embed] })
-}
-
-const resolveSellPnlUsd = (row: { pnlUsd: number | null }): number => {
-  return row.pnlUsd ?? 0
 }
 
 const handleCard = async (interaction: ChatInputCommandInteraction, guildId: string) => {
@@ -285,15 +301,18 @@ const handleCard = async (interaction: ChatInputCommandInteraction, guildId: str
     where: { guildId },
   })
 
-  const pnlBySell = sellsToday.map((row) => resolveSellPnlUsd(row))
-
-  const totalPnlUsd = pnlBySell.reduce((s, p) => s + p, 0)
-  const volumeUsd = sellsToday.reduce((s, t) => s + t.amountUsd, 0)
-  const totalCostBasis = sellsToday.reduce((s, t, i) => s + (t.amountUsd - pnlBySell[i]), 0)
-  const blendedPnlPercent = totalCostBasis > 0 ? (totalPnlUsd / totalCostBasis) * 100 : 0
-  const wins = pnlBySell.filter((p) => p > 0).length
-  const winRatePercent = sellsToday.length > 0 ? (wins / sellsToday.length) * 100 : 0
+  const grossPnl = sellsToday.reduce((s, t) => s + (t.pnlUsd ?? 0), 0)
   const uniqueTokenCount = new Set(sellsToday.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokenCount)
+  const netPnl = grossPnl - fees
+  const volumeUsd = sellsToday.reduce((s, t) => s + t.amountUsd, 0)
+  const totalCostBasis = sellsToday.reduce(
+    (s, t) => s + (t.amountUsd - (t.pnlUsd ?? 0)),
+    0
+  )
+  const blendedPnlPercent = totalCostBasis > 0 ? (netPnl / totalCostBasis) * 100 : 0
+  const wins = sellsToday.filter((t) => (t.pnlUsd ?? 0) > 0).length
+  const winRatePercent = sellsToday.length > 0 ? (wins / sellsToday.length) * 100 : 0
 
   const dayLabel = todayStart.toLocaleDateString('en-GB', {
     timeZone: tz,
@@ -307,7 +326,7 @@ const handleCard = async (interaction: ChatInputCommandInteraction, guildId: str
     variant: 'daily',
     walletName: wallet.name ?? truncateAddress(wallet.address),
     dayLabel,
-    totalPnlUsd,
+    totalPnlUsd: netPnl,
     blendedPnlPercent,
     volumeUsd,
     sellCount: sellsToday.length,
@@ -354,13 +373,15 @@ const handleCardToday = async (interaction: ChatInputCommandInteraction, guildId
     where: { guildId },
   })
 
-  const totalPnlUsd = sellsToday.reduce((s, t) => s + (t.pnlUsd ?? 0), 0)
+  const grossPnl = sellsToday.reduce((s, t) => s + (t.pnlUsd ?? 0), 0)
+  const uniqueTokenCount = new Set(sellsToday.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokenCount)
+  const netPnl = grossPnl - fees
   const volumeUsd = sellsToday.reduce((s, t) => s + t.amountUsd, 0)
   const totalCostBasis = sellsToday.reduce((s, t) => s + (t.amountUsd - (t.pnlUsd ?? 0)), 0)
-  const blendedPnlPercent = totalCostBasis > 0 ? (totalPnlUsd / totalCostBasis) * 100 : 0
+  const blendedPnlPercent = totalCostBasis > 0 ? (netPnl / totalCostBasis) * 100 : 0
   const wins = sellsToday.filter((t) => (t.pnlUsd ?? 0) > 0).length
   const winRatePercent = sellsToday.length > 0 ? (wins / sellsToday.length) * 100 : 0
-  const uniqueTokenCount = new Set(sellsToday.map((t) => t.tokenAddress)).size
 
   const dayLabel = todayStart.toLocaleDateString('en-GB', {
     timeZone: tz,
@@ -374,7 +395,7 @@ const handleCardToday = async (interaction: ChatInputCommandInteraction, guildId
     variant: 'daily',
     walletName: `All Wallets (${wallets.length})`,
     dayLabel,
-    totalPnlUsd,
+    totalPnlUsd: netPnl,
     blendedPnlPercent,
     volumeUsd,
     sellCount: sellsToday.length,
@@ -418,13 +439,15 @@ const handleCardAll = async (interaction: ChatInputCommandInteraction, guildId: 
     where: { guildId },
   })
 
-  const totalPnlUsd = allSells.reduce((s, t) => s + (t.pnlUsd ?? 0), 0)
+  const grossPnl = allSells.reduce((s, t) => s + (t.pnlUsd ?? 0), 0)
+  const uniqueTokenCount = new Set(allSells.map((t) => t.tokenAddress)).size
+  const fees = computeTokenFees(uniqueTokenCount)
+  const netPnl = grossPnl - fees
   const volumeUsd = allSells.reduce((s, t) => s + t.amountUsd, 0)
   const totalCostBasis = allSells.reduce((s, t) => s + (t.amountUsd - (t.pnlUsd ?? 0)), 0)
-  const blendedPnlPercent = totalCostBasis > 0 ? (totalPnlUsd / totalCostBasis) * 100 : 0
+  const blendedPnlPercent = totalCostBasis > 0 ? (netPnl / totalCostBasis) * 100 : 0
   const wins = allSells.filter((t) => (t.pnlUsd ?? 0) > 0).length
   const winRatePercent = allSells.length > 0 ? (wins / allSells.length) * 100 : 0
-  const uniqueTokenCount = new Set(allSells.map((t) => t.tokenAddress)).size
 
   const firstTrade = allSells[0]
   const lastTrade = allSells[allSells.length - 1]
@@ -449,7 +472,7 @@ const handleCardAll = async (interaction: ChatInputCommandInteraction, guildId: 
     variant: 'daily',
     walletName: `All Wallets (${wallets.length})`,
     dayLabel: `All Time: ${dayLabel}`,
-    totalPnlUsd,
+    totalPnlUsd: netPnl,
     blendedPnlPercent,
     volumeUsd,
     sellCount: allSells.length,

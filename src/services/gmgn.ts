@@ -150,8 +150,6 @@ const parseFloat0 = (val: string | undefined | null): number => {
   return Number.isFinite(n) ? n : 0
 }
 
-const FEE_PER_TX_USD = 1
-
 const mapActivityToTrade = (activity: GmgnActivity): TradeData | null => {
   if (activity.event_type === 'transfer') return null
 
@@ -161,14 +159,13 @@ const mapActivityToTrade = (activity: GmgnActivity): TradeData | null => {
   const tokenSymbol = activity.token?.symbol ?? tokenAddress.slice(0, 6)
   const costUsd = parseFloat0(activity.cost_usd)
   const buyCostUsd = parseFloat0(activity.buy_cost_usd)
-  
+
   let pnlUsd: number | null = null
   let pnlPercent: number | null = null
-  
+
   if (activity.event_type === 'sell' && buyCostUsd > 0) {
-    const fees = 2 * FEE_PER_TX_USD
-    pnlUsd = costUsd - buyCostUsd - fees
-    pnlPercent = buyCostUsd > 0 ? (pnlUsd / buyCostUsd) * 100 : 0
+    pnlUsd = costUsd - buyCostUsd
+    pnlPercent = (pnlUsd / buyCostUsd) * 100
   }
 
   return {

@@ -46,3 +46,8 @@ model Trade {
   @@index([createdAt])
   @@index([timestamp])
 }
+
+model Migration {
+  name      String   @id
+  appliedAt DateTime @default(now())
+}
