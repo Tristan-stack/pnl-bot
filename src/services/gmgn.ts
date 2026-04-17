@@ -2,7 +2,7 @@ import axios from 'axios'
 import { randomUUID } from 'crypto'
 import dns from 'dns'
 import { z } from 'zod'
-import type { TradeData } from '../types'
+import { SOL_MINT, type TradeData } from '../types'
 
 dns.setDefaultResultOrder('ipv4first')
 
@@ -142,6 +142,18 @@ const GmgnActivityResponseSchema = z.object({
   error: z.string().optional(),
 })
 
+const GmgnTokenInfoResponseSchema = z.object({
+  code: z.union([z.number(), z.string()]),
+  data: z
+    .object({
+      price: z.union([z.number(), z.string()]).optional(),
+    })
+    .passthrough()
+    .optional(),
+  message: z.string().optional(),
+  error: z.string().optional(),
+})
+
 export type GmgnActivity = z.infer<typeof GmgnActivitySchema>
 
 const parseFloat0 = (val: string | undefined | null): number => {
@@ -179,6 +191,88 @@ const mapActivityToTrade = (activity: GmgnActivity): TradeData | null => {
     timestamp: new Date(activity.timestamp * 1000),
   }
 }
+
+const parseTokenInfoUsdPrice = (data: unknown): number | null => {
+  const parsed = GmgnTokenInfoResponseSchema.safeParse(data)
+  if (!parsed.success) return null
+  const code = typeof parsed.data.code === 'string' ? parseInt(parsed.data.code, 10) : parsed.data.code
+  if (code !== 0) return null
+  const raw = parsed.data.data?.price
+  if (raw === undefined || raw === null) return null
+  const n = typeof raw === 'number' ? raw : parseFloat(String(raw))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** Spot price in USD for a mint (same OpenAPI as wallet_activity). */
+export const getTokenUsdPriceGmgn = async (
+  tokenAddress: string,
+  chain: string = DEFAULT_CHAIN
+): Promise<number | null> => {
+  let apiKey: string
+  try {
+    apiKey = getApiKey()
+  } catch {
+    return null
+  }
+
+  const { timestamp, client_id } = buildAuthQuery()
+  const max429PerPage = getMax429RetriesPerPage()
+
+  for (let attempt = 0; attempt < max429PerPage; attempt++) {
+    try {
+      const response = await runGmgnHttp(() =>
+        axios.get(`${BASE_URL}/v1/token/info`, {
+          params: {
+            chain,
+            address: tokenAddress,
+            timestamp,
+            client_id,
+          },
+          headers: {
+            'X-APIKEY': apiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+          validateStatus: () => true,
+        })
+      )
+
+      if (response.status === 429) {
+        const headerWait = readRetryAfterMs(response.headers)
+        const waitMs = backoffMsFor429(attempt, headerWait)
+        globalPauseUntil = Math.max(globalPauseUntil, Date.now() + waitMs)
+        console.warn(
+          `[GMGN] token/info 429 ${tokenAddress.slice(0, 8)}... (try ${attempt + 1}/${max429PerPage}), backoff ${waitMs}ms`
+        )
+        await queueGmgnBackoff(waitMs)
+        continue
+      }
+
+      if (response.status !== 200) {
+        const body =
+          typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+        console.warn(
+          `[GMGN] token/info HTTP ${response.status} for ${tokenAddress.slice(0, 8)}...: ${body.slice(0, 200)}`
+        )
+        return null
+      }
+
+      const price = parseTokenInfoUsdPrice(response.data)
+      if (price !== null) return price
+      console.warn('[GMGN] token/info: missing or invalid price in response')
+      return null
+    } catch (err) {
+      const axiosErr = err as { message?: string }
+      console.warn('[GMGN] token/info failed:', axiosErr.message)
+      return null
+    }
+  }
+
+  return null
+}
+
+/** Native SOL / USD from GMGN token info (wrapped SOL mint). */
+export const getSolUsdPriceGmgn = (): Promise<number | null> => getTokenUsdPriceGmgn(SOL_MINT)
 
 export const getWalletActivity = async (
   walletAddress: string,

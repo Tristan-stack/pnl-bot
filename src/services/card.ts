@@ -4,6 +4,28 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import type { CardData } from '../types'
 import { formatUsd, formatPercent, formatTimestamp, formatVolume } from '../utils/format'
+import { formatSolFromUsd, getSolUsdPrice } from '../utils/sol-price'
+
+const SOL_LOGO_PATH = join(process.cwd(), 'data/backgrounds/images-removebg-preview.png')
+
+type CanvasImage = Awaited<ReturnType<typeof loadImage>>
+
+let solLogoLoadPromise: Promise<CanvasImage | null> | null = null
+
+const getSolLogo = (): Promise<CanvasImage | null> => {
+  if (!solLogoLoadPromise) {
+    solLogoLoadPromise = (async () => {
+      try {
+        if (!existsSync(SOL_LOGO_PATH)) return null
+        const buf = await readFile(SOL_LOGO_PATH)
+        return await loadImage(buf)
+      } catch {
+        return null
+      }
+    })()
+  }
+  return solLogoLoadPromise
+}
 
 const WIDTH = 1200
 const HEIGHT = 630
@@ -45,6 +67,56 @@ const registerFonts = async () => {
   } catch (err) {
     console.warn('[Card] Could not register fonts, using system fallback:', err)
   }
+}
+
+const drawPnlUsdWithSolRow = async (
+  ctx: SKRSContext2D,
+  opts: {
+    leftX: number
+    panelRight: number
+    pnlUsd: number
+    accentColor: string
+    pnlBaselineY: number
+  }
+): Promise<{ pctBaselineY: number }> => {
+  const { leftX, panelRight, pnlUsd, accentColor, pnlBaselineY } = opts
+  const solUsd = await getSolUsdPrice()
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+
+  ctx.fillStyle = accentColor
+  ctx.font = 'bold 72px Inter, sans-serif'
+  const pnlText = formatUsd(pnlUsd)
+  let pnlFontSize = 72
+  while (ctx.measureText(pnlText).width > panelRight - leftX && pnlFontSize > 36) {
+    pnlFontSize -= 4
+    ctx.font = `bold ${pnlFontSize}px Inter, sans-serif`
+  }
+  ctx.fillText(pnlText, leftX, pnlBaselineY)
+
+  const marginBelowPnl = Math.max(24, Math.round(pnlFontSize * 0.3))
+  const solLineBaseline = pnlBaselineY + Math.round(pnlFontSize * 0.72) + marginBelowPnl
+
+  const solText = `≈ ${formatSolFromUsd(pnlUsd, solUsd)}`
+  ctx.fillStyle = COLORS.textMuted
+  ctx.font = '500 22px Inter, sans-serif'
+
+  const logo = await getSolLogo()
+  const iconH = 32
+  let textX = leftX
+  if (logo) {
+    const iconW = (logo.width / logo.height) * iconH
+    const iconY = solLineBaseline - iconH * 0.78
+    ctx.drawImage(logo, leftX, iconY, iconW, iconH)
+    textX = leftX + iconW + 14
+  }
+  ctx.fillText(solText, textX, solLineBaseline)
+
+  const marginBelowSol = 22
+  const pctBaselineY = solLineBaseline + marginBelowSol + 18
+
+  return { pctBaselineY }
 }
 
 const drawRoundedRect = (
@@ -115,18 +187,16 @@ const generateDailyCard = async (
   ctx.font = '400 16px Inter, sans-serif'
   ctx.fillText(cardData.dayLabel, leftX, 115)
 
-  const contentStartY = 180
+  const pnlBaselineY = 208
+  const { pctBaselineY } = await drawPnlUsdWithSolRow(ctx, {
+    leftX,
+    panelRight,
+    pnlUsd: cardData.totalPnlUsd,
+    accentColor,
+    pnlBaselineY,
+  })
 
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 72px Inter, sans-serif'
-  const pnlText = formatUsd(cardData.totalPnlUsd)
-  let pnlFontSize = 72
-  while (ctx.measureText(pnlText).width > panelRight - leftX && pnlFontSize > 36) {
-    pnlFontSize -= 4
-    ctx.font = `bold ${pnlFontSize}px Inter, sans-serif`
-  }
-  ctx.fillText(pnlText, leftX, contentStartY)
-
   ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.blendedPnlPercent)
   let pctFontSize = 32
@@ -134,11 +204,11 @@ const generateDailyCard = async (
     pctFontSize -= 2
     ctx.font = `bold ${pctFontSize}px Inter, sans-serif`
   }
-  ctx.fillText(pctText, leftX, contentStartY + 50)
+  ctx.fillText(pctText, leftX, pctBaselineY)
 
   ctx.fillStyle = COLORS.text
   ctx.font = '400 18px Inter, sans-serif'
-  
+
   const stats = [
     { label: 'Sells', value: cardData.sellCount.toString() },
     { label: 'Tokens', value: cardData.uniqueTokenCount.toString() },
@@ -146,7 +216,7 @@ const generateDailyCard = async (
     { label: 'Volume', value: formatVolume(cardData.volumeUsd) },
   ]
 
-  const statsStartY = contentStartY + 100
+  const statsStartY = pctBaselineY + 52
   const statsGap = 50
 
   stats.forEach((stat, i) => {
@@ -231,18 +301,16 @@ const generateSingleTradeCard = async (
   ctx.font = 'bold 14px Inter, sans-serif'
   ctx.fillText(badgeText, badgeX + badgePadX, badgeY)
 
-  const contentStartY = 200
+  const pnlBaselineY = 218
+  const { pctBaselineY } = await drawPnlUsdWithSolRow(ctx, {
+    leftX,
+    panelRight,
+    pnlUsd: cardData.pnlUsd,
+    accentColor,
+    pnlBaselineY,
+  })
 
   ctx.fillStyle = accentColor
-  ctx.font = 'bold 72px Inter, sans-serif'
-  const pnlText = formatUsd(cardData.pnlUsd)
-  let pnlFontSizeSingle = 72
-  while (ctx.measureText(pnlText).width > panelRight - leftX && pnlFontSizeSingle > 36) {
-    pnlFontSizeSingle -= 4
-    ctx.font = `bold ${pnlFontSizeSingle}px Inter, sans-serif`
-  }
-  ctx.fillText(pnlText, leftX, contentStartY)
-
   ctx.font = 'bold 32px Inter, sans-serif'
   const pctText = formatPercent(cardData.pnlPercent)
   let pctFontSizeSingle = 32
@@ -250,12 +318,12 @@ const generateSingleTradeCard = async (
     pctFontSizeSingle -= 2
     ctx.font = `bold ${pctFontSizeSingle}px Inter, sans-serif`
   }
-  ctx.fillText(pctText, leftX, contentStartY + 50)
+  ctx.fillText(pctText, leftX, pctBaselineY)
 
   ctx.fillStyle = COLORS.text
   ctx.font = '400 18px Inter, sans-serif'
 
-  const statsStartY = contentStartY + 120
+  const statsStartY = pctBaselineY + 72
   const statsGap = 50
 
   ctx.fillStyle = COLORS.textMuted
