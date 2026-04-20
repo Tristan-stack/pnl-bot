@@ -4,7 +4,6 @@ import prisma from '../db/client'
 import { getWalletActivity } from './gmgn'
 import { generatePnlCard } from './card'
 import { truncateAddress } from '../utils/format'
-import { FEE_PER_TOKEN_USD } from '../utils/fees'
 import type { CardData } from '../types'
 
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000
@@ -82,18 +81,14 @@ const sendPnlCard = async (
   const channel = await client.channels.fetch(config.channelId).catch(() => null)
   if (!channel || !(channel instanceof TextChannel)) return
 
-  const costBasis = trade.amountUsd - trade.pnlUsd
-  const approxNetPnl = trade.pnlUsd - FEE_PER_TOKEN_USD
-  const approxNetPercent = costBasis > 0 ? (approxNetPnl / costBasis) * 100 : trade.pnlPercent
-
   const cardData: CardData = {
     variant: 'single',
     walletName: wallet.name ?? truncateAddress(wallet.address),
     tokenSymbol: trade.tokenSymbol,
     tradeType: trade.tradeType,
     amountUsd: trade.amountUsd,
-    pnlUsd: approxNetPnl,
-    pnlPercent: approxNetPercent,
+    pnlUsd: trade.pnlUsd,
+    pnlPercent: trade.pnlPercent,
     timestamp: trade.timestamp,
   }
 
